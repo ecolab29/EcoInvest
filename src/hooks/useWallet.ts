@@ -1,5 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { WalletState } from '../types';
+import { DAppConnector, HederaSessionEvent, HederaJsonRpcMethod, HederaChainId } from '@hashgraph/hedera-wallet-connect';
+import { LedgerId } from '@hashgraph/sdk';
+import { Core } from '@walletconnect/core';
+import { Web3Wallet } from '@walletconnect/web3wallet';
 
 export function useWallet() {
   const [walletState, setWalletState] = useState<WalletState>({
@@ -8,42 +12,128 @@ export function useWallet() {
     isConnected: false,
     error: null,
   });
+  const [isWalletConnected, setIsWalletConnected] = useState(false);
+  const [walletAddress, setWalletAddress] = useState('');
+  const [connector, setConnector] = useState<DAppConnector | null>(null);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [walletBalance, setWalletBalance] = useState<string>('0');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const connectWallet = useCallback(async () => {
-    setWalletState(prev => ({ ...prev, isConnecting: true, error: null }));
-    
-    try {
-      // Simulated wallet connection
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      const mockAddress = '0x' + Math.random().toString(16).slice(2, 10);
-      
-      setWalletState({
-        address: mockAddress,
-        isConnecting: false,
-        isConnected: true,
-        error: null,
-      });
-    } catch (error) {
-      setWalletState({
-        address: null,
-        isConnecting: false,
-        isConnected: false,
-        error: 'Failed to connect wallet',
-      });
+
+
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const projectId = '0a4f8da85fc03a4b02efcbf34fb6b818';
+        if (!projectId) {
+          throw new Error('WalletConnect project ID not found');
+        }
+
+        const core = new Core({
+          projectId,
+          relayUrl: 'wss://relay.walletconnect.org',
+        });
+
+        await Web3Wallet.init({
+          core,
+          metadata: {
+            name: "EcoInvest",
+            description: "Dapp",
+            url: window.location.origin,
+            icons: ["https://your-icon-url.com/icon.png"]
+          }
+        }); 
+
+        const dAppConnector = new DAppConnector(
+          {
+            name: "EcoInvest",
+            description: "Dapp",
+            url: window.location.origin,
+            icons: ["https://your-icon-url.com/icon.png"]
+          },
+          LedgerId.TESTNET,
+          projectId, 
+          Object.values(HederaJsonRpcMethod),
+          [HederaSessionEvent.ChainChanged, HederaSessionEvent.AccountsChanged],
+          [HederaChainId.Testnet],
+          { relayUrl: 'wss://relay.walletconnect.org'}
+        );
+
+        await dAppConnector.init();
+        setConnector(dAppConnector);
+        setConnectionError(null);
+
+        // Check for existing sessions
+        const existingSessions = dAppConnector.walletConnectClient?.session.getAll() || [];
+        if (existingSessions.length > 0) {
+          const lastSession = existingSessions[existingSessions.length - 1];
+          const accountId = lastSession.namespaces.hedera?.accounts[0].split(':')[2];
+          if (accountId) {
+            setWalletAddress(accountId);
+            setIsWalletConnected(true);
+          }
+        }
+
+      } catch (error) {
+        console.error('Error initializing DAppConnector:', error);
+        setConnectionError(error instanceof Error ? error.message : 'Failed to initialize wallet connection');
+      }
+    };
+
+    init();
+
+    return () => {
+      if (connector) {
+        connector.disconnectAll();
+      }
+    };
+  }, []);
+
+
+  const connectWallet = async () => {
+    if (!connector) {
+      setConnectionError('Wallet connector not initialized');
+      return;
     }
-  }, []);
 
-  const disconnectWallet = useCallback(() => {
-    setWalletState({
-      address: null,
-      isConnecting: false,
-      isConnected: false,
-      error: null,
-    });
-  }, []);
+    try {
+      const session = await connector.openModal();
+      if (!session.namespaces.hedera?.accounts?.[0]) {
+        throw new Error('No Hedera account found in session');
+      }
+      const accountId = session.namespaces.hedera.accounts[0].split(':')[2];
+      setWalletAddress(accountId);
+      setIsWalletConnected(true);
+      setConnectionError(null);
+    } catch (error) {
+      console.error('Wallet connection failed:', error);
+      setConnectionError(error instanceof Error ? error.message : 'Failed to connect wallet');
+    }
+  };
+
+
+  const disconnectWallet = async () => {
+    if (!connector) return;
+
+    try {
+      setIsLoading(true);
+      await connector.disconnectAll();
+      setIsWalletConnected(false);
+      setWalletAddress('');
+      setWalletBalance('0');
+      setConnectionError(null);
+    } catch (error) {
+      console.error('Disconnect failed:', error);
+      setConnectionError(error instanceof Error ? error.message : 'Failed to disconnect wallet');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return {
     ...walletState,
+    walletAddress,
+    isLoading,
     connectWallet,
     disconnectWallet,
   };

@@ -17,7 +17,7 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const location = useLocation();
-  const { address, isConnecting, connectWallet, disconnectWallet } = useWallet();
+  const { walletAddress, isLoading, connectWallet, disconnectWallet } = useWallet();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
 
   return (
@@ -40,8 +40,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             </div>
             <div className="flex items-center">
               <WalletButton
-                address={address}
-                isConnecting={isConnecting}
+                address={walletAddress}
+                isConnecting={isLoading}
                 onConnect={connectWallet}
                 onDisconnect={disconnectWallet}
               />
